@@ -1,9 +1,22 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 func main() {
-	result, err := one()
+	var debug bool
+
+	args := os.Args
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-d":
+			debug = true
+		}
+	}
+
+	result, err := two(debug)
 	if err != nil {
 		panic(err)
 	}
