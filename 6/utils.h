@@ -1,6 +1,6 @@
 #pragma once
 
-#define WINDOW_SIZE 4
+#define WINDOW_SIZE 14
 
 #define true 1
 #define false 0

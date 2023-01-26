@@ -30,7 +30,9 @@ StrSlice read_all(int fileno) {
 
 bool buf_distinct(char *buf, bool debug) {
   if (debug){
-    char str[] = {buf[0], buf[1], buf[2], buf[3], 0};
+    char str[WINDOW_SIZE+1];
+    memcpy(str, buf, WINDOW_SIZE);
+    str[WINDOW_SIZE] = 0;
     fprintf(stderr, "comparing: %s\n", str);
   }
 

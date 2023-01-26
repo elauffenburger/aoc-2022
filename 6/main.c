@@ -14,7 +14,7 @@ int main(int argc, char **argv) {
   }
 
   StrSlice input = read_all(STDIN_FILENO);
-  if (input.len < 4) {
+  if (input.len < WINDOW_SIZE) {
     printf("-1\n");
     return -1;
   }
@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     }
 
     // Add the new element to the buf.
-    buf[3] = input.ptr[i];
+    buf[WINDOW_SIZE-1] = input.ptr[i];
 
     // Wait until we have a full buffer.
     if (i < WINDOW_SIZE - 1) {
