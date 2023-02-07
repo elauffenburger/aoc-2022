@@ -42,7 +42,7 @@ func emain() error {
 		return err
 	}
 
-	one(rows, debug)
+	two(rows, debug)
 
 	return nil
 }
@@ -67,6 +67,28 @@ func one(rows rows, debug bool) {
 	}
 
 	fmt.Printf("%d\n", numVisible)
+}
+
+func two(rows rows, debug bool) {
+	maxScore := 0
+	for rowNum, row := range rows {
+		for colNum := range row {
+			if debug {
+				rows.print(rowNum, colNum)
+			}
+
+			top, right, bottom, left, score := rows.scenicScore(rowNum, colNum)
+			if score > maxScore {
+				maxScore = score
+			}
+
+			if debug {
+				fmt.Printf("score: %v (top: %d, right: %d, bottom: %d, left: %d)\n", score, top, right, bottom, left)
+			}
+		}
+	}
+
+	fmt.Printf("%v\n", maxScore)
 }
 
 type row []int
@@ -120,6 +142,43 @@ func (r rows) isVisible(rowNum, colNum int) bool {
 	return false
 }
 
+func (r rows) scenicScore(rowNum, colNum int) (top, right, bottom, left, total int) {
+	// Check if this is an edge tree.
+	{
+		// Top.
+		if rowNum == 0 ||
+			// Bottom.
+			rowNum == len(r)-1 ||
+			// Left.
+			colNum == 0 ||
+			// Right.
+			colNum == len(r[rowNum])-1 {
+			return 1, 1, 1, 1, 1
+		}
+	}
+
+	height := r[rowNum][colNum]
+
+	colSlice := r.colSlice(colNum)
+
+	left = distanceToLarger(height, reverse(r[rowNum][0:colNum]))
+	right = distanceToLarger(height, r[rowNum][colNum+1:])
+
+	top = distanceToLarger(height, reverse(colSlice[0:rowNum]))
+	bottom = distanceToLarger(height, colSlice[rowNum+1:])
+
+	return top, right, bottom, left, top * bottom * right * left
+}
+
+func reverse(ints []int) []int {
+	var reversed = make([]int, 0, len(ints))
+	for i := len(ints) - 1; i >= 0; i-- {
+		reversed = append(reversed, ints[i])
+	}
+
+	return reversed
+}
+
 func (r rows) colSlice(col int) []int {
 	slice := make([]int, 0, len(r))
 	for _, row := range r {
@@ -137,6 +196,19 @@ func isMaxExclusive(needle int, haystack []int) bool {
 	}
 
 	return true
+}
+
+func distanceToLarger(needle int, haystack []int) int {
+	distance := 0
+	for _, other := range haystack {
+		distance++
+
+		if other >= needle {
+			return distance
+		}
+	}
+
+	return distance
 }
 
 func (r rows) print(rowNum, colNum int) {
