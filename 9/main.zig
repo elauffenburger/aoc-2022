@@ -77,7 +77,7 @@ fn emain() !void {
 }
 
 fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
-    var state = State.init();
+    var state = State(9).init();
     var tail_locations = std.AutoHashMap(Vec2, u32).init(allocator);
 
     if (debug) {
@@ -93,10 +93,11 @@ fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
         while (i < move.magnitude) : (i += 1) {
             try state.moveHead(move.direction);
 
-            if (tail_locations.get(state.tail)) |old_val| {
-                try tail_locations.put(state.tail, old_val + 1);
+            const tail = state.tail();
+            if (tail_locations.get(tail)) |old_val| {
+                try tail_locations.put(tail, old_val + 1);
             } else {
-                try tail_locations.put(state.tail, 1);
+                try tail_locations.put(tail, 1);
             }
 
             if (debug) {
@@ -110,7 +111,7 @@ fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
         const point = entry.key_ptr.*;
         const count = entry.value_ptr.*;
 
-        try std.fmt.format(std.io.getStdOut().writer(), "{}:{}\n", .{point, count});
+        try std.fmt.format(std.io.getStdOut().writer(), "{}:{}\n", .{ point, count });
     }
 
     try std.fmt.format(std.io.getStdOut().writer(), "{}\n", .{tail_locations.count()});
@@ -169,113 +170,122 @@ const Vec2 = struct {
 const Bounds =
     struct { bottomLeft: Vec2, topRight: Vec2 };
 
-const State = struct {
-    start: Vec2 = .{ .x = 0, .y = 0 },
-    head: Vec2 = .{ .x = 0, .y = 0 },
-    tail: Vec2 = .{ .x = 0, .y = 0 },
+fn State(comptime numKnots: u32) type {
+    return struct {
+        start: Vec2 = .{ .x = 0, .y = 0 },
+        head: Vec2 = .{ .x = 0, .y = 0 },
+        knots: [numKnots]Vec2 = [_]Vec2{.{ .x = 0, .y = 0 }} ** numKnots,
 
-    fn init() @This() {
-        return .{};
-    }
-
-    fn moveHead(self: *@This(), direction: Move.Direction) !void {
-        switch (direction) {
-            .up => self.head.y += 1,
-            .right => self.head.x += 1,
-            .down => self.head.y -= 1,
-            .left => self.head.x -= 1,
+        fn init() @This() {
+            return .{};
         }
 
-        try self.correctTail();
-    }
+        fn moveHead(self: *@This(), direction: Move.Direction) !void {
+            switch (direction) {
+                .up => self.head.y += 1,
+                .right => self.head.x += 1,
+                .down => self.head.y -= 1,
+                .left => self.head.x -= 1,
+            }
 
-    fn correctTail(self: *@This()) !void {
-        const distance = self.tail.distance(self.head);
-        const abs_distance = try distance.abs();
-
-        // If the tail is touching the head, nothing to do.
-        if (abs_distance.x <= 1 and abs_distance.y <= 1) {
-            return;
+            for (self.knots) |*knot, i| {
+                const nextKnot = if (i == 0) self.head else self.knots[i - 1];
+                try self.correctKnot(knot, nextKnot);
+            }
         }
 
-        const sign_x = std.math.sign(distance.x);
-        const sign_y = std.math.sign(distance.y);
+        fn correctKnot(self: *@This(), knot: *Vec2, nextKnot: Vec2) !void {
+            const distance = knot.*.distance(nextKnot);
+            const abs_distance = try distance.abs();
 
-        // Check if we just need to move horizontally.
-        if (abs_distance.x > 1 and abs_distance.y == 0) {
-            self.moveTail(.{ .x = self.tail.x + sign_x, .y = self.tail.y });
-            return;
-        }
-
-        // Check if we just need to move vertically.
-        if (abs_distance.x == 0 and abs_distance.y > 1) {
-            self.moveTail(.{ .x = self.tail.x, .y = self.tail.y + sign_y });
-            return;
-        }
-
-        // Check if we need to move horizontally and vertically.
-        {
-            if (std.meta.eql(abs_distance, Vec2{ .x = 1, .y = 2 })) {
-                self.moveTail(.{ .x = self.head.x, .y = self.head.y - sign_y });
+            // If the knot is touching the next knot, nothing to do.
+            if (abs_distance.x <= 1 and abs_distance.y <= 1) {
                 return;
             }
 
-            if (std.meta.eql(abs_distance, Vec2{ .x = 2, .y = 1 })) {
-                self.moveTail(.{ .x = self.head.x - sign_x, .y = self.head.y });
+            const sign_x = std.math.sign(distance.x);
+            const sign_y = std.math.sign(distance.y);
+
+            // Check if we just need to move horizontally.
+            if (abs_distance.x > 1 and abs_distance.y == 0) {
+                knot.*.x += sign_x;
                 return;
             }
-        }
 
-        std.debug.print("{}", .{self});
-        unreachable;
-    }
-
-    fn moveTail(self: *@This(), to: Vec2) void {
-        self.tail = to;
-    }
-
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-
-        const SPACE = 5;
-
-        var bounds = Vec2.bounds(&[_]Vec2{ self.start, self.head, self.tail });
-        bounds.topRight = bounds.topRight.add(.{ .x = SPACE, .y = SPACE });
-        bounds.bottomLeft = bounds.bottomLeft.add(.{ .x = -SPACE, .y = -SPACE });
-
-        var y = bounds.topRight.y;
-        while (y >= bounds.bottomLeft.y) : (y -= 1) {
-            var x = bounds.bottomLeft.x;
-            while (x <= bounds.topRight.x) : (x += 1) {
-                const point: Vec2 = .{ .x = x, .y = y };
-
-                if (std.meta.eql(point, self.head)) {
-                    try writer.print("H ", .{});
-                    continue;
-                }
-
-                if (std.meta.eql(point, self.tail)) {
-                    try writer.print("T ", .{});
-                    continue;
-                }
-
-                if (std.meta.eql(point, self.start)) {
-                    try writer.print("s ", .{});
-                    continue;
-                }
-
-                try writer.print(". ", .{});
+            // Check if we just need to move vertically.
+            if (abs_distance.x == 0 and abs_distance.y > 1) {
+                knot.*.y += sign_y;
+                return;
             }
 
-            try writer.writeAll("\n");
+            // Check if we need to move horizontally and vertically.
+            {
+                if (abs_distance.y > 1) {
+                    knot.*.x = nextKnot.x;
+                    knot.*.y = nextKnot.y - sign_y;
+                    return;
+                }
+
+                if (abs_distance.x > 1) {
+                    knot.*.x = nextKnot.x - sign_x;
+                    knot.*.y = nextKnot.y;
+                    return;
+                }
+            }
+
+            std.debug.print("{}", .{self});
+            unreachable;
         }
 
-        try writer.print("head: {}, tail: {}, start: {}", .{ self.head, self.tail, self.start });
-    }
-};
+        fn tail(self: @This()) Vec2 {
+            return self.knots[numKnots - 1];
+        }
+
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+
+            const SPACE = 5;
+
+            var bounds = Vec2.bounds(&[_]Vec2{ self.start, self.head } ++ &self.knots);
+            bounds.topRight = bounds.topRight.add(.{ .x = SPACE, .y = SPACE });
+            bounds.bottomLeft = bounds.bottomLeft.add(.{ .x = -SPACE, .y = -SPACE });
+
+            var y = bounds.topRight.y;
+            while (y >= bounds.bottomLeft.y) : (y -= 1) {
+                var x = bounds.bottomLeft.x;
+                loop: while (x <= bounds.topRight.x) : (x += 1) {
+                    const point: Vec2 = .{ .x = x, .y = y };
+
+                    if (std.meta.eql(point, self.head)) {
+                        try writer.print("H ", .{});
+                        continue;
+                    }
+
+                    for (self.knots) |knot, i| {
+                        if (std.meta.eql(point, knot)) {
+                            try writer.print("{} ", .{i + 1});
+                            continue :loop;
+                        }
+                    }
+
+                    if (std.meta.eql(point, self.start)) {
+                        try writer.print("s ", .{});
+                        continue;
+                    }
+
+                    try writer.print(". ", .{});
+                }
+
+                try writer.writeAll("\n");
+            }
+
+            try writer.print("head: {}, knots: {any}, start: {}", .{ self.head, self.knots, self.start });
+        }
+    };
+}
