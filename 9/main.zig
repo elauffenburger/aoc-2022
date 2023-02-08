@@ -78,7 +78,7 @@ fn emain() !void {
 
 fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
     var state = State.init();
-    var tail_locations = std.AutoHashMap(Vec2, bool).init(allocator);
+    var tail_locations = std.AutoHashMap(Vec2, u32).init(allocator);
 
     if (debug) {
         std.debug.print("{}\n", .{state});
@@ -92,13 +92,28 @@ fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
         var i: u32 = 0;
         while (i < move.magnitude) : (i += 1) {
             try state.moveHead(move.direction);
-            try tail_locations.put(state.tail, true);
+
+            if (tail_locations.get(state.tail)) |old_val| {
+                try tail_locations.put(state.tail, old_val + 1);
+            } else {
+                try tail_locations.put(state.tail, 1);
+            }
 
             if (debug) {
                 std.debug.print("{}\n", .{state});
             }
         }
     }
+
+    var tail_locations_iter = tail_locations.iterator();
+    while (tail_locations_iter.next()) |entry| {
+        const point = entry.key_ptr.*;
+        const count = entry.value_ptr.*;
+
+        try std.fmt.format(std.io.getStdOut().writer(), "{}:{}\n", .{point, count});
+    }
+
+    try std.fmt.format(std.io.getStdOut().writer(), "{}\n", .{tail_locations.count()});
 }
 
 const Vec2 = struct {
