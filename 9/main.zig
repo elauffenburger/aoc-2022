@@ -106,15 +106,44 @@ fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
         }
     }
 
-    var tail_locations_iter = tail_locations.iterator();
-    while (tail_locations_iter.next()) |entry| {
-        const point = entry.key_ptr.*;
-        const count = entry.value_ptr.*;
+    {
+        const writer = std.io.getStdOut().writer();
 
-        try std.fmt.format(std.io.getStdOut().writer(), "{}:{}\n", .{ point, count });
+        const keys = blk: {
+            var iter = tail_locations.keyIterator();
+            var keys = std.ArrayList(Vec2).init(allocator);
+            while (iter.next()) |key| {
+                try keys.append(key.*);
+            }
+
+            break :blk keys;
+        };
+
+        const tailLocationT = @TypeOf(tail_locations);
+        const Printer = struct {
+            tailLocations: tailLocationT,
+            writer: @TypeOf(writer),
+
+            pub fn printPoint(self: @This(), point: Vec2) !void {
+                if (self.tailLocations.contains(point)) {
+                    try self.writer.writeAll("# ");
+                } else {
+                    try self.writer.writeAll(". ");
+                }
+            }
+
+            pub fn writeAll(self: @This(), bytes: []const u8) !void {
+                try self.writer.writeAll(bytes);
+            }
+        };
+
+        try printPoints(keys.items, Printer{
+            .writer = writer,
+            .tailLocations = tail_locations,
+        });
+
+        try std.fmt.format(writer, "{}\n", .{tail_locations.count()});
     }
-
-    try std.fmt.format(std.io.getStdOut().writer(), "{}\n", .{tail_locations.count()});
 }
 
 const Vec2 = struct {
@@ -243,49 +272,70 @@ fn State(comptime numKnots: u32) type {
 
         pub fn format(
             self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
             writer: anytype,
         ) !void {
-            _ = fmt;
-            _ = options;
+            const Printer = struct {
+                start: Vec2,
+                head: Vec2,
+                knots: [numKnots]Vec2,
+                writer: @TypeOf(writer),
 
-            const SPACE = 5;
-
-            var bounds = Vec2.bounds(&[_]Vec2{ self.start, self.head } ++ &self.knots);
-            bounds.topRight = bounds.topRight.add(.{ .x = SPACE, .y = SPACE });
-            bounds.bottomLeft = bounds.bottomLeft.add(.{ .x = -SPACE, .y = -SPACE });
-
-            var y = bounds.topRight.y;
-            while (y >= bounds.bottomLeft.y) : (y -= 1) {
-                var x = bounds.bottomLeft.x;
-                loop: while (x <= bounds.topRight.x) : (x += 1) {
-                    const point: Vec2 = .{ .x = x, .y = y };
-
-                    if (std.meta.eql(point, self.head)) {
-                        try writer.print("H ", .{});
-                        continue;
+                pub fn printPoint(printer: @This(), point: Vec2) !void {
+                    if (std.meta.eql(point, printer.head)) {
+                        try printer.writer.writeAll("H ");
+                        return;
                     }
 
-                    for (self.knots) |knot, i| {
+                    for (printer.knots) |knot, i| {
                         if (std.meta.eql(point, knot)) {
-                            try writer.print("{} ", .{i + 1});
-                            continue :loop;
+                            try printer.writer.print("{} ", .{i + 1});
+                            return;
                         }
                     }
 
-                    if (std.meta.eql(point, self.start)) {
-                        try writer.print("s ", .{});
-                        continue;
+                    if (std.meta.eql(point, printer.start)) {
+                        try printer.writer.writeAll("s ");
+                        return;
                     }
 
-                    try writer.print(". ", .{});
+                    try printer.writer.writeAll(". ");
                 }
 
-                try writer.writeAll("\n");
-            }
+                pub fn writeAll(printer: @This(), bytes: []const u8) !void {
+                    try printer.writer.writeAll(bytes);
+                }
+            };
+
+            try printPoints(&[_]Vec2{ self.start, self.head } ++ &self.knots, Printer{
+                .start = self.start,
+                .head = self.head,
+                .knots = self.knots,
+                .writer = writer,
+            });
 
             try writer.print("head: {}, knots: {any}, start: {}", .{ self.head, self.knots, self.start });
         }
     };
+}
+
+fn printPoints(points: []const Vec2, printer: anytype) !void {
+    const SPACE = 5;
+
+    var bounds = Vec2.bounds(points);
+    bounds.topRight = bounds.topRight.add(.{ .x = SPACE, .y = SPACE });
+    bounds.bottomLeft = bounds.bottomLeft.add(.{ .x = -SPACE, .y = -SPACE });
+
+    var y = bounds.topRight.y;
+    while (y >= bounds.bottomLeft.y) : (y -= 1) {
+        var x = bounds.bottomLeft.x;
+        while (x <= bounds.topRight.x) : (x += 1) {
+            const point: Vec2 = .{ .x = x, .y = y };
+
+            try printer.printPoint(point);
+        }
+
+        try printer.writeAll("\n");
+    }
 }
