@@ -1,4 +1,7 @@
 const std = @import("std");
+const c = @cImport({
+    @cInclude("signal.h");
+});
 
 pub fn main() void {
     emain() catch |e| {
@@ -42,21 +45,40 @@ const Move = struct {
 };
 
 fn emain() !void {
+    const ParseArgsError = error{
+        InvalidDebugArg,
+    };
+
     const allocator: std.mem.Allocator = std.heap.page_allocator;
     const stdin = std.io.getStdIn();
 
     var debug = false;
+    var show_moves = false;
     {
         var args = std.process.args();
         while (args.next()) |arg| {
             if (std.mem.eql(u8, arg, "-d")) {
                 debug = true;
 
-                if (args.next()) |time_str| {
-                    const sleep_time = try std.fmt.parseInt(u64, time_str, 10);
-                    std.debug.print("waiting...\n", .{});
-                    std.time.sleep(sleep_time * 1_000_000_000);
+                if (args.next()) |debug_arg| {
+                    if (!std.mem.eql(u8, debug_arg, "attach")) {
+                        return ParseArgsError.InvalidDebugArg;
+                    }
+
+                    std.debug.print("waiting for debugger...\n", .{});
+
+                    var sig: c_int = 1;
+                    const sig_set = [_]c.sigset_t{c.SIGINT};
+                    _ = c.sigwait(&sig_set, &sig);
+                    continue;
                 }
+
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "-m")) {
+                show_moves = true;
+                continue;
             }
         }
     }
@@ -73,19 +95,19 @@ fn emain() !void {
         try moves.append(move);
     }
 
-    try one(allocator, moves.items, debug);
+    try two(allocator, moves.items, .{ .show_moves = show_moves, .debug = debug });
 }
 
-fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
+fn two(allocator: std.mem.Allocator, moves: []const Move, opts: struct { show_moves: bool, debug: bool }) !void {
     var state = State(9).init();
     var tail_locations = std.AutoHashMap(Vec2, u32).init(allocator);
 
-    if (debug) {
+    if (opts.debug) {
         std.debug.print("{}\n", .{state});
     }
 
     for (moves) |move| {
-        if (debug) {
+        if (opts.debug or opts.show_moves) {
             std.debug.print("{}\n", .{move});
         }
 
@@ -100,7 +122,7 @@ fn one(allocator: std.mem.Allocator, moves: []const Move, debug: bool) !void {
                 try tail_locations.put(tail, 1);
             }
 
-            if (debug) {
+            if (opts.debug) {
                 std.debug.print("{}\n", .{state});
             }
         }
@@ -161,6 +183,13 @@ const Vec2 = struct {
         };
     }
 
+    fn unit(self: @This()) !@This() {
+        return .{
+            .x = if (self.x == 0) 0 else if (self.x > 0) 1 else -1,
+            .y = if (self.y == 0) 0 else if (self.y > 0) 1 else -1,
+        };
+    }
+
     fn add(self: @This(), other: @This()) @This() {
         return .{
             .x = self.x + other.x,
@@ -216,10 +245,17 @@ fn State(comptime numKnots: u32) type {
                 .down => self.head.y -= 1,
                 .left => self.head.x -= 1,
             }
+            // std.debug.print("{}\n", .{self.*});
 
             for (self.knots) |*knot, i| {
                 const nextKnot = if (i == 0) self.head else self.knots[i - 1];
+                const old_knot = knot.*;
+
                 try self.correctKnot(knot, nextKnot);
+
+                if (!std.meta.eql(old_knot, knot.*)) {
+                    // std.debug.print("{}\n", .{self.*});
+                }
             }
         }
 
@@ -249,17 +285,9 @@ fn State(comptime numKnots: u32) type {
 
             // Check if we need to move horizontally and vertically.
             {
-                if (abs_distance.y > 1) {
-                    knot.*.x = nextKnot.x;
-                    knot.*.y = nextKnot.y - sign_y;
-                    return;
-                }
-
-                if (abs_distance.x > 1) {
-                    knot.*.x = nextKnot.x - sign_x;
-                    knot.*.y = nextKnot.y;
-                    return;
-                }
+                knot.*.x += 1 * sign_x;
+                knot.*.y += 1 * sign_y;
+                return;
             }
 
             std.debug.print("{}", .{self});
@@ -314,8 +342,6 @@ fn State(comptime numKnots: u32) type {
                 .knots = self.knots,
                 .writer = writer,
             });
-
-            try writer.print("head: {}, knots: {any}, start: {}", .{ self.head, self.knots, self.start });
         }
     };
 }
