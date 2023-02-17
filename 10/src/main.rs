@@ -16,29 +16,38 @@ fn main() {
 fn emain() -> Result<(), String> {
     let mut debug = false;
 
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: VecDeque<String> = std::env::args().skip(1).collect();
     while !args.is_empty() {
-        let arg = args.pop().unwrap();
+        let arg = args.pop_front().unwrap();
 
         match arg.as_str() {
             "-d" => {
                 debug = true;
 
-                println!("waiting for debugger...");
+                match args.pop_front() {
+                    None => {}
+                    Some(arg) => match arg.as_str() {
+                        "attach" => {
+                            println!("waiting for debugger...");
 
-                unsafe {
-                    let set: libc::sigset_t = (libc::SIGTRAP | libc::SIGINT).try_into().unwrap();
+                            unsafe {
+                                let set: libc::sigset_t =
+                                    (libc::SIGTRAP | libc::SIGINT).try_into().unwrap();
 
-                    let mut sig: libc::c_int = 0;
-                    if libc::sigwait(&set, &mut sig) != 0 {
-                        return Err("sigwait failed".into());
-                    }
+                                let mut sig: libc::c_int = 0;
+                                if libc::sigwait(&set, &mut sig) != 0 {
+                                    return Err("sigwait failed".into());
+                                }
 
-                    match sig {
-                        libc::SIGINT => return Err("caught SIGINT".into()),
-                        _ => {}
-                    }
-                };
+                                match sig {
+                                    libc::SIGINT => return Err("caught SIGINT".into()),
+                                    _ => {}
+                                }
+                            };
+                        }
+                        _ => return Err(format!("unknown debug option '{arg}'")),
+                    },
+                }
             }
             _ => return Err(format!("unexpected arg '{arg}'")),
         }
@@ -71,36 +80,68 @@ struct PendingOp {
 }
 
 struct Crt {
-    sprite_x: usize,
-
-    display: [[bool; 40]; 6],
+    cycle: u32,
+    display: [bool; Crt::WIDTH * Crt::HEIGHT],
 }
 
-// impl Crt {
-//     pub fn new() -> Self {
-//         Self {
-//             sprite_x: 0,
-//             display: [[false; 40]; 6],
-//         }
-//     }
-// }
+impl Crt {
+    const WIDTH: usize = 40;
+    const HEIGHT: usize = 6;
 
-// impl Display for Crt {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         for val in self.display.iter() {
-//             f.write_fmt(format_args!("{}", if val { '#' } else { '.' }))?;
-//         }
+    pub fn new() -> Self {
+        Self {
+            cycle: 0,
+            display: [false; Self::WIDTH * Self::HEIGHT],
+        }
+    }
 
-//         Ok(())
-//     }
-// }
+    pub fn clock_high(self: &mut Self) {
+        self.cycle += 1;
+    }
+
+    pub fn clock_low(self: &mut Self, sprite_x: i32) {
+        self.display[self.cycle as usize - 1] = self.visible(sprite_x);
+
+        println!("crt cycle: {}", self.cycle);
+        println!("{}", self.draw());
+    }
+
+    pub fn draw(self: &mut Self) -> String {
+        let mut out = String::new();
+        for (i, val) in self.display.iter().enumerate() {
+            if i >= self.cycle as usize {
+                break;
+            }
+
+            if i > 0 && i % Self::WIDTH == 0 {
+                out.push('\n');
+            }
+
+            out.push(if *val { '#' } else { '.' });
+        }
+
+        out
+    }
+
+    // pos is the 1-indexed position of the pixel being drawn this cycle.
+    fn pos(self: &Self) -> usize {
+        (self.cycle as usize - 1) % Self::WIDTH
+    }
+
+    fn visible(self: &Self, sprite_x: i32) -> bool {
+        let pos = self.pos() as i32;
+        let dist = sprite_x - pos;
+
+        dist >= -1 && dist <= 1
+    }
+}
 
 struct Cpu {
     cycle: u32,
     op: Option<PendingOp>,
 
     registers: Registers,
-    // crt: Crt,
+    crt: Crt,
 
     debug: bool,
 }
@@ -109,7 +150,7 @@ impl Debug for Cpu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "Cpu {{ cycle: {}, registers: Registers {{ x: {} }} }}",
-            self.cycle, self.registers.x,
+            self.cycle, self.registers.x
         ))
     }
 }
@@ -120,6 +161,7 @@ impl Cpu {
             cycle: 0,
             op: None,
             registers: Registers::default(),
+            crt: Crt::new(),
             debug,
         }
     }
@@ -145,18 +187,24 @@ impl Cpu {
 
     fn clock_high(self: &mut Self) {
         self.cycle += 1;
-        println!("\nbefore: {self:#?}");
+        self.crt.clock_high();
+
+        if self.debug {
+            println!("\nbefore: {self:#?}");
+        }
     }
 
     fn clock_low(self: &mut Self) -> Result<(), String> {
-        self.draw_crt();
+        self.crt.clock_low(self.registers.x);
+
         self.do_work()?;
-        println!("after: {self:#?}");
+
+        if self.debug {
+            println!("after: {self:#?}");
+        }
 
         Ok(())
     }
-
-    fn draw_crt(self: &mut Self) {}
 
     fn queue_op(self: &mut Self, op: Op) {
         self.op = Some(PendingOp {
